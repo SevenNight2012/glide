@@ -30,7 +30,7 @@ import com.bumptech.glide.request.ThumbnailRequestCoordinator;
 import com.bumptech.glide.request.target.PreloadTarget;
 import com.bumptech.glide.request.target.Target;
 import com.bumptech.glide.request.target.ViewTarget;
-import com.bumptech.glide.signature.ApplicationVersionSignature;
+import com.bumptech.glide.signature.AndroidResourceSignature;
 import com.bumptech.glide.util.Executors;
 import com.bumptech.glide.util.Preconditions;
 import com.bumptech.glide.util.Synthetic;
@@ -38,6 +38,7 @@ import com.bumptech.glide.util.Util;
 import java.io.File;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Executor;
 
@@ -286,14 +287,52 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
       return thumbnail((RequestBuilder<TranscodeType>) null);
     }
 
+    return thumbnail(Arrays.asList(thumbnails));
+  }
+
+  /**
+   * Recursively applies {@link #thumbnail(RequestBuilder)} so that the {@link RequestBuilder}s are
+   * loaded as thumbnails in the given priority order.
+   *
+   * <p>{@link #thumbnail(RequestBuilder)} is applied in the order given so that the {@link
+   * RequestBuilder} at position 0 has the {@link RequestBuilder} at position 1 applied as using its
+   * thumbnail method, the {@link RequestBuilder} at position 1 has the {@link RequestBuilder} at
+   * position 2 applied using its thumbnail method and so on.
+   *
+   * <p>Calling this method with a {@code null} list of {@link RequestBuilder} thumbnails or an
+   * empty list of {@link RequestBuilder} thumbnails is equivalent to calling {@link
+   * #thumbnail(RequestBuilder)} with {@code null}.
+   *
+   * <p>Any individual {@link RequestBuilder} in the list of thumbnails provided here may be {@code
+   * null}. {@code null} {@link RequestBuilder}s are ignored and excluded from the recursive chain.
+   *
+   * <p>The {@link RequestBuilder} objects provided here may be mutated and have any previous calls
+   * to this method or {@link #thumbnail(RequestBuilder)} methods overridden.
+   *
+   * <p>Overrides any previous calls to {@link #thumbnail(RequestBuilder)}, {@link
+   * #thumbnail(float)} and this method.
+   *
+   * @see #thumbnail(float)
+   * @see #thumbnail(RequestBuilder)
+   * @return This request builder.
+   */
+  @SuppressWarnings({"CheckResult", "unchecked"})
+  @NonNull
+  @CheckResult
+  public RequestBuilder<TranscodeType> thumbnail(
+      @Nullable List<RequestBuilder<TranscodeType>> thumbnails) {
+    if (thumbnails == null || thumbnails.isEmpty()) {
+      return thumbnail((RequestBuilder<TranscodeType>) null);
+    }
+
     RequestBuilder<TranscodeType> previous = null;
 
     // Start with the lowest priority thumbnail so that we can safely handle mutations if
     // autoClone() is enabled by assigning the result of calling thumbnail() during the iteration.
     // Starting with the highest priority thumbnail would prevent us from assigning the result of
     // thumbnail because the mutated request wouldn't be used in the next iteration.
-    for (int i = thumbnails.length - 1; i >= 0; i--) {
-      RequestBuilder<TranscodeType> current = thumbnails[i];
+    for (int i = thumbnails.size() - 1; i >= 0; i--) {
+      RequestBuilder<TranscodeType> current = thumbnails.get(i);
       // Ignore null thumbnails.
       if (current == null) {
         continue;
@@ -495,12 +534,12 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
    * load the image represented by the given {@link Integer} resource id. Defaults to {@link
    * com.bumptech.glide.load.model.ResourceLoader} to load resource id models.
    *
-   * <p>By default this method adds a version code based signature to the cache key used to cache
-   * this resource in Glide. This signature is sufficient to guarantee that end users will see the
-   * most up to date versions of your Drawables, but during development if you do not increment your
-   * version code before each install and you replace a Drawable with different data without
-   * changing the Drawable name, you may see inconsistent cached data. To get around this, consider
-   * using {@link com.bumptech.glide.load.engine.DiskCacheStrategy#NONE} via {@link
+   * <p>By default this method adds a version code and night mode based signature to the cache key
+   * used to cache this resource in Glide. This signature is sufficient to guarantee that end users
+   * will see the most up to date versions of your Drawables, but during development if you do not
+   * increment your version code before each install and you replace a Drawable with different data
+   * without changing the Drawable name, you may see inconsistent cached data. To get around this,
+   * consider using {@link com.bumptech.glide.load.engine.DiskCacheStrategy#NONE} via {@link
    * RequestOptions#diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy)} during
    * development, and re-enabling the default {@link
    * com.bumptech.glide.load.engine.DiskCacheStrategy#RESOURCE} for release builds.
@@ -519,13 +558,13 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
    * caution for non-{@link Bitmap} {@link Drawable}s.
    *
    * @see #load(Integer)
-   * @see com.bumptech.glide.signature.ApplicationVersionSignature
+   * @see com.bumptech.glide.signature.AndroidResourceSignature
    */
   @NonNull
   @CheckResult
   @Override
   public RequestBuilder<TranscodeType> load(@RawRes @DrawableRes @Nullable Integer resourceId) {
-    return loadGeneric(resourceId).apply(signatureOf(ApplicationVersionSignature.obtain(context)));
+    return loadGeneric(resourceId).apply(signatureOf(AndroidResourceSignature.obtain(context)));
   }
 
   /**
@@ -571,8 +610,7 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
    *
    * <p>This method returns a "deep" copy in that all non-immutable arguments are copied such that
    * changes to one builder will not affect the other builder. However, in addition to immutable
-   * arguments, the current model is not copied copied so changes to the model will affect both
-   * builders.
+   * arguments, the current model is not copied so changes to the model will affect both builders.
    */
   @SuppressWarnings({
     "unchecked",
@@ -623,7 +661,6 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
     Request previous = target.getRequest();
     if (request.isEquivalentTo(previous)
         && !isSkipMemoryCacheWithCompletePreviousRequest(options, previous)) {
-      request.recycle();
       // If the request is completed, beginning again will ensure the result is re-delivered,
       // triggering RequestListeners and Targets. If the request is failed, beginning again will
       // restart the request, giving it another chance to complete. If the request is already
@@ -849,6 +886,7 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
       BaseRequestOptions<?> requestOptions,
       Executor callbackExecutor) {
     return buildRequestRecursive(
+        /*requestLock=*/ new Object(),
         target,
         targetListener,
         /*parentCoordinator=*/ null,
@@ -861,6 +899,7 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
   }
 
   private Request buildRequestRecursive(
+      Object requestLock,
       Target<TranscodeType> target,
       @Nullable RequestListener<TranscodeType> targetListener,
       @Nullable RequestCoordinator parentCoordinator,
@@ -874,12 +913,13 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
     // Build the ErrorRequestCoordinator first if necessary so we can update parentCoordinator.
     ErrorRequestCoordinator errorRequestCoordinator = null;
     if (errorBuilder != null) {
-      errorRequestCoordinator = new ErrorRequestCoordinator(parentCoordinator);
+      errorRequestCoordinator = new ErrorRequestCoordinator(requestLock, parentCoordinator);
       parentCoordinator = errorRequestCoordinator;
     }
 
     Request mainRequest =
         buildThumbnailRequestRecursive(
+            requestLock,
             target,
             targetListener,
             parentCoordinator,
@@ -903,6 +943,7 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
 
     Request errorRequest =
         errorBuilder.buildRequestRecursive(
+            requestLock,
             target,
             targetListener,
             errorRequestCoordinator,
@@ -917,6 +958,7 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
   }
 
   private Request buildThumbnailRequestRecursive(
+      Object requestLock,
       Target<TranscodeType> target,
       RequestListener<TranscodeType> targetListener,
       @Nullable RequestCoordinator parentCoordinator,
@@ -956,9 +998,11 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
         thumbOverrideHeight = requestOptions.getOverrideHeight();
       }
 
-      ThumbnailRequestCoordinator coordinator = new ThumbnailRequestCoordinator(parentCoordinator);
+      ThumbnailRequestCoordinator coordinator =
+          new ThumbnailRequestCoordinator(requestLock, parentCoordinator);
       Request fullRequest =
           obtainRequest(
+              requestLock,
               target,
               targetListener,
               requestOptions,
@@ -972,6 +1016,7 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
       // Recursively generate thumbnail requests.
       Request thumbRequest =
           thumbnailBuilder.buildRequestRecursive(
+              requestLock,
               target,
               targetListener,
               coordinator,
@@ -986,9 +1031,11 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
       return coordinator;
     } else if (thumbSizeMultiplier != null) {
       // Base case: thumbnail multiplier generates a thumbnail request, but cannot recurse.
-      ThumbnailRequestCoordinator coordinator = new ThumbnailRequestCoordinator(parentCoordinator);
+      ThumbnailRequestCoordinator coordinator =
+          new ThumbnailRequestCoordinator(requestLock, parentCoordinator);
       Request fullRequest =
           obtainRequest(
+              requestLock,
               target,
               targetListener,
               requestOptions,
@@ -1003,6 +1050,7 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
 
       Request thumbnailRequest =
           obtainRequest(
+              requestLock,
               target,
               targetListener,
               thumbnailOptions,
@@ -1018,6 +1066,7 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
     } else {
       // Base case: no thumbnail.
       return obtainRequest(
+          requestLock,
           target,
           targetListener,
           requestOptions,
@@ -1031,6 +1080,7 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
   }
 
   private Request obtainRequest(
+      Object requestLock,
       Target<TranscodeType> target,
       RequestListener<TranscodeType> targetListener,
       BaseRequestOptions<?> requestOptions,
@@ -1043,6 +1093,7 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
     return SingleRequest.obtain(
         context,
         glideContext,
+        requestLock,
         model,
         transcodeClass,
         requestOptions,

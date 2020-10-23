@@ -22,7 +22,10 @@ import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
 import androidx.fragment.app.FragmentManager;
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.GlideBuilder.WaitForFramesAfterTrimMemory;
+import com.bumptech.glide.GlideExperiments;
 import com.bumptech.glide.RequestManager;
+import com.bumptech.glide.load.resource.bitmap.HardwareConfigState;
 import com.bumptech.glide.util.Preconditions;
 import com.bumptech.glide.util.Util;
 import java.util.Collection;
@@ -67,10 +70,27 @@ public class RequestManagerRetriever implements Handler.Callback {
   private final ArrayMap<View, Fragment> tempViewToSupportFragment = new ArrayMap<>();
   private final ArrayMap<View, android.app.Fragment> tempViewToFragment = new ArrayMap<>();
   private final Bundle tempBundle = new Bundle();
+  // This is really misplaced here, but to put it anywhere else means duplicating all of the
+  // Fragment/Activity extraction logic that already exists here. It's gross, but less likely to
+  // break.
+  private final FrameWaiter frameWaiter;
 
-  public RequestManagerRetriever(@Nullable RequestManagerFactory factory) {
+  public RequestManagerRetriever(
+      @Nullable RequestManagerFactory factory, GlideExperiments experiments) {
     this.factory = factory != null ? factory : DEFAULT_FACTORY;
     handler = new Handler(Looper.getMainLooper(), this /* Callback */);
+
+    frameWaiter = buildFrameWaiter(experiments);
+  }
+
+  private static FrameWaiter buildFrameWaiter(GlideExperiments experiments) {
+    if (!HardwareConfigState.HARDWARE_BITMAPS_SUPPORTED
+        || !HardwareConfigState.BLOCK_HARDWARE_BITMAPS_WHEN_GL_CONTEXT_MIGHT_NOT_BE_INITIALIZED) {
+      return new DoNothingFirstFrameWaiter();
+    }
+    return experiments.isEnabled(WaitForFramesAfterTrimMemory.class)
+        ? new FirstFrameAndAfterTrimMemoryWaiter()
+        : new FirstFrameWaiter();
   }
 
   @NonNull
@@ -108,7 +128,11 @@ public class RequestManagerRetriever implements Handler.Callback {
         return get((FragmentActivity) context);
       } else if (context instanceof Activity) {
         return get((Activity) context);
-      } else if (context instanceof ContextWrapper) {
+      } else if (context instanceof ContextWrapper
+          // Only unwrap a ContextWrapper if the baseContext has a non-null application context.
+          // Context#createPackageContext may return a Context without an Application instance,
+          // in which case a ContextWrapper may be used to attach one.
+          && ((ContextWrapper) context).getBaseContext().getApplicationContext() != null) {
         return get(((ContextWrapper) context).getBaseContext());
       }
     }
@@ -122,6 +146,7 @@ public class RequestManagerRetriever implements Handler.Callback {
       return get(activity.getApplicationContext());
     } else {
       assertNotDestroyed(activity);
+      frameWaiter.registerSelf(activity);
       FragmentManager fm = activity.getSupportFragmentManager();
       return supportFragmentGet(activity, fm, /*parentHint=*/ null, isActivityVisible(activity));
     }
@@ -130,13 +155,20 @@ public class RequestManagerRetriever implements Handler.Callback {
   @NonNull
   public RequestManager get(@NonNull Fragment fragment) {
     Preconditions.checkNotNull(
-        fragment.getActivity(),
+        fragment.getContext(),
         "You cannot start a load on a fragment before it is attached or after it is destroyed");
     if (Util.isOnBackgroundThread()) {
-      return get(fragment.getActivity().getApplicationContext());
+      return get(fragment.getContext().getApplicationContext());
     } else {
+      // In some unusual cases, it's possible to have a Fragment not hosted by an activity. There's
+      // not all that much we can do here. Most apps will be started with a standard activity. If
+      // we manage not to register the first frame waiter for a while, the consequences are not
+      // catastrophic, we'll just use some extra memory.
+      if (fragment.getActivity() != null) {
+        frameWaiter.registerSelf(fragment.getActivity());
+      }
       FragmentManager fm = fragment.getChildFragmentManager();
-      return supportFragmentGet(fragment.getActivity(), fm, fragment, fragment.isVisible());
+      return supportFragmentGet(fragment.getContext(), fm, fragment, fragment.isVisible());
     }
   }
 
@@ -145,8 +177,11 @@ public class RequestManagerRetriever implements Handler.Callback {
   public RequestManager get(@NonNull Activity activity) {
     if (Util.isOnBackgroundThread()) {
       return get(activity.getApplicationContext());
+    } else if (activity instanceof FragmentActivity) {
+      return get((FragmentActivity) activity);
     } else {
       assertNotDestroyed(activity);
+      frameWaiter.registerSelf(activity);
       android.app.FragmentManager fm = activity.getFragmentManager();
       return fragmentGet(activity, fm, /*parentHint=*/ null, isActivityVisible(activity));
     }
@@ -174,7 +209,7 @@ public class RequestManagerRetriever implements Handler.Callback {
     // prefer to just fall back to the Activity directly.
     if (activity instanceof FragmentActivity) {
       Fragment fragment = findSupportFragment(view, (FragmentActivity) activity);
-      return fragment != null ? get(fragment) : get(activity);
+      return fragment != null ? get(fragment) : get((FragmentActivity) activity);
     }
 
     // Standard Fragments.
@@ -297,7 +332,7 @@ public class RequestManagerRetriever implements Handler.Callback {
   }
 
   @Nullable
-  private Activity findActivity(@NonNull Context context) {
+  private static Activity findActivity(@NonNull Context context) {
     if (context instanceof Activity) {
       return (Activity) context;
     } else if (context instanceof ContextWrapper) {
@@ -326,6 +361,13 @@ public class RequestManagerRetriever implements Handler.Callback {
     if (Util.isOnBackgroundThread() || Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1) {
       return get(fragment.getActivity().getApplicationContext());
     } else {
+      // In some unusual cases, it's possible to have a Fragment not hosted by an activity. There's
+      // not all that much we can do here. Most apps will be started with a standard activity. If
+      // we manage not to register the first frame waiter for a while, the consequences are not
+      // catastrophic, we'll just use some extra memory.
+      if (fragment.getActivity() != null) {
+        frameWaiter.registerSelf(fragment.getActivity());
+      }
       android.app.FragmentManager fm = fragment.getChildFragmentManager();
       return fragmentGet(fragment.getActivity(), fm, fragment, fragment.isVisible());
     }
@@ -335,25 +377,19 @@ public class RequestManagerRetriever implements Handler.Callback {
   @Deprecated
   @NonNull
   RequestManagerFragment getRequestManagerFragment(Activity activity) {
-    return getRequestManagerFragment(
-        activity.getFragmentManager(), /*parentHint=*/ null, isActivityVisible(activity));
+    return getRequestManagerFragment(activity.getFragmentManager(), /*parentHint=*/ null);
   }
 
   @SuppressWarnings("deprecation")
   @NonNull
   private RequestManagerFragment getRequestManagerFragment(
-      @NonNull final android.app.FragmentManager fm,
-      @Nullable android.app.Fragment parentHint,
-      boolean isParentVisible) {
+      @NonNull final android.app.FragmentManager fm, @Nullable android.app.Fragment parentHint) {
     RequestManagerFragment current = (RequestManagerFragment) fm.findFragmentByTag(FRAGMENT_TAG);
     if (current == null) {
       current = pendingRequestManagerFragments.get(fm);
       if (current == null) {
         current = new RequestManagerFragment();
         current.setParentFragmentHint(parentHint);
-        if (isParentVisible) {
-          current.getGlideLifecycle().onStart();
-        }
         pendingRequestManagerFragments.put(fm, current);
         fm.beginTransaction().add(current, FRAGMENT_TAG).commitAllowingStateLoss();
         handler.obtainMessage(ID_REMOVE_FRAGMENT_MANAGER, fm).sendToTarget();
@@ -370,7 +406,7 @@ public class RequestManagerRetriever implements Handler.Callback {
       @NonNull android.app.FragmentManager fm,
       @Nullable android.app.Fragment parentHint,
       boolean isParentVisible) {
-    RequestManagerFragment current = getRequestManagerFragment(fm, parentHint, isParentVisible);
+    RequestManagerFragment current = getRequestManagerFragment(fm, parentHint);
     RequestManager requestManager = current.getRequestManager();
     if (requestManager == null) {
       // TODO(b/27524013): Factor out this Glide.get() call.
@@ -378,26 +414,32 @@ public class RequestManagerRetriever implements Handler.Callback {
       requestManager =
           factory.build(
               glide, current.getGlideLifecycle(), current.getRequestManagerTreeNode(), context);
+      // This is a bit of hack, we're going to start the RequestManager, but not the
+      // corresponding Lifecycle. It's safe to start the RequestManager, but starting the
+      // Lifecycle might trigger memory leaks. See b/154405040
+      if (isParentVisible) {
+        requestManager.onStart();
+      }
       current.setRequestManager(requestManager);
     }
     return requestManager;
   }
 
   @NonNull
-  SupportRequestManagerFragment getSupportRequestManagerFragment(FragmentActivity activity) {
-    return getSupportRequestManagerFragment(
-        activity.getSupportFragmentManager(), /*parentHint=*/ null, isActivityVisible(activity));
+  SupportRequestManagerFragment getSupportRequestManagerFragment(FragmentManager fragmentManager) {
+    return getSupportRequestManagerFragment(fragmentManager, /*parentHint=*/ null);
   }
 
-  private static boolean isActivityVisible(Activity activity) {
+  private static boolean isActivityVisible(Context context) {
     // This is a poor heuristic, but it's about all we have. We'd rather err on the side of visible
     // and start requests than on the side of invisible and ignore valid requests.
-    return !activity.isFinishing();
+    Activity activity = findActivity(context);
+    return activity == null || !activity.isFinishing();
   }
 
   @NonNull
   private SupportRequestManagerFragment getSupportRequestManagerFragment(
-      @NonNull final FragmentManager fm, @Nullable Fragment parentHint, boolean isParentVisible) {
+      @NonNull final FragmentManager fm, @Nullable Fragment parentHint) {
     SupportRequestManagerFragment current =
         (SupportRequestManagerFragment) fm.findFragmentByTag(FRAGMENT_TAG);
     if (current == null) {
@@ -405,9 +447,6 @@ public class RequestManagerRetriever implements Handler.Callback {
       if (current == null) {
         current = new SupportRequestManagerFragment();
         current.setParentFragmentHint(parentHint);
-        if (isParentVisible) {
-          current.getGlideLifecycle().onStart();
-        }
         pendingSupportRequestManagerFragments.put(fm, current);
         fm.beginTransaction().add(current, FRAGMENT_TAG).commitAllowingStateLoss();
         handler.obtainMessage(ID_REMOVE_SUPPORT_FRAGMENT_MANAGER, fm).sendToTarget();
@@ -422,8 +461,7 @@ public class RequestManagerRetriever implements Handler.Callback {
       @NonNull FragmentManager fm,
       @Nullable Fragment parentHint,
       boolean isParentVisible) {
-    SupportRequestManagerFragment current =
-        getSupportRequestManagerFragment(fm, parentHint, isParentVisible);
+    SupportRequestManagerFragment current = getSupportRequestManagerFragment(fm, parentHint);
     RequestManager requestManager = current.getRequestManager();
     if (requestManager == null) {
       // TODO(b/27524013): Factor out this Glide.get() call.
@@ -431,6 +469,12 @@ public class RequestManagerRetriever implements Handler.Callback {
       requestManager =
           factory.build(
               glide, current.getGlideLifecycle(), current.getRequestManagerTreeNode(), context);
+      // This is a bit of hack, we're going to start the RequestManager, but not the
+      // corresponding Lifecycle. It's safe to start the RequestManager, but starting the
+      // Lifecycle might trigger memory leaks. See b/154405040
+      if (isParentVisible) {
+        requestManager.onStart();
+      }
       current.setRequestManager(requestManager);
     }
     return requestManager;

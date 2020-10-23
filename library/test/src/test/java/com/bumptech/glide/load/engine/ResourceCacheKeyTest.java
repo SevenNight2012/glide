@@ -1,6 +1,6 @@
 package com.bumptech.glide.load.engine;
 
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 
 import androidx.annotation.NonNull;
@@ -22,10 +22,8 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE)
 public class ResourceCacheKeyTest {
   @Rule public final KeyTester keyTester = new KeyTester();
 

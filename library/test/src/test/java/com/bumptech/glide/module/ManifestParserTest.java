@@ -1,7 +1,7 @@
 package com.bumptech.glide.module;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.mockito.Matchers.eq;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -23,7 +23,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = 18)
+@Config(sdk = 18)
 @SuppressWarnings("deprecation")
 public class ManifestParserTest {
   private static final String MODULE_VALUE = "GlideModule";

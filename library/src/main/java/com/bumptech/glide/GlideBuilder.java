@@ -2,11 +2,13 @@ package com.bumptech.glide;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.os.Build;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.collection.ArrayMap;
 import com.bumptech.glide.Glide.RequestOptionsFactory;
+import com.bumptech.glide.GlideExperiments.Experiment;
 import com.bumptech.glide.load.DataSource;
 import com.bumptech.glide.load.engine.Engine;
 import com.bumptech.glide.load.engine.GlideException;
@@ -36,8 +38,10 @@ import java.util.List;
 import java.util.Map;
 
 /** A builder class for setting default structural classes for Glide to use. */
+@SuppressWarnings("PMD.ImmutableField")
 public final class GlideBuilder {
   private final Map<Class<?>, TransitionOptions<?, ?>> defaultTransitionOptions = new ArrayMap<>();
+  private final GlideExperiments.Builder glideExperimentsBuilder = new GlideExperiments.Builder();
   private Engine engine;
   private BitmapPool bitmapPool;
   private ArrayPool arrayPool;
@@ -60,7 +64,6 @@ public final class GlideBuilder {
   private GlideExecutor animationExecutor;
   private boolean isActiveResourceRetentionAllowed;
   @Nullable private List<RequestListener<Object>> defaultRequestListeners;
-  private boolean isLoggingRequestOriginsEnabled;
 
   /**
    * Sets the {@link com.bumptech.glide.load.engine.bitmap_recycle.BitmapPool} implementation to use
@@ -445,7 +448,40 @@ public final class GlideBuilder {
    * <p>This is an experimental API that may be removed in the future.
    */
   public GlideBuilder setLogRequestOrigins(boolean isEnabled) {
-    isLoggingRequestOriginsEnabled = isEnabled;
+    glideExperimentsBuilder.update(new LogRequestOrigins(), isEnabled);
+    return this;
+  }
+
+  /**
+   * Set to {@code true} to make Glide use {@link android.graphics.ImageDecoder} when decoding
+   * {@link Bitmap}s on Android P and higher.
+   *
+   * <p>Calls to this method on versions of Android less than Q are ignored. Although ImageDecoder
+   * was added in Android O a bug prevents it from scaling images with exif orientations until Q.
+   * See b/136096254.
+   *
+   * <p>Specifically {@link android.graphics.ImageDecoder} will be used in place of {@link
+   * com.bumptech.glide.load.resource.bitmap.Downsampler} and {@link android.graphics.BitmapFactory}
+   * to decode {@link Bitmap}s. GIFs, resources, and all other types of {@link
+   * android.graphics.drawable.Drawable}s are not affected by this flag.
+   *
+   * <p>This flag is experimental and may be removed without deprecation in a future version.
+   *
+   * <p>When this flag is enabled, Bitmap's will not be re-used when decoding images, though they
+   * may still be used as part of {@link com.bumptech.glide.load.Transformation}s because {@link
+   * android.graphics.ImageDecoder} does not support Bitmap re-use.
+   *
+   * <p>When this flag is enabled {@link
+   * com.bumptech.glide.load.resource.bitmap.Downsampler#FIX_BITMAP_SIZE_TO_REQUESTED_DIMENSIONS} is
+   * ignored. All other {@link com.bumptech.glide.load.resource.bitmap.Downsampler} flags are
+   * obeyed, although there may be subtle behavior differences because many options are subject to
+   * the whims of {@link android.graphics.BitmapFactory} and {@link android.graphics.ImageDecoder}
+   * which may not agree.
+   */
+  public GlideBuilder setImageDecoderEnabledForBitmaps(boolean isEnabled) {
+    glideExperimentsBuilder.update(
+        new EnableImageDecoderForBitmaps(),
+        /*isEnabled=*/ isEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q);
     return this;
   }
 
@@ -520,8 +556,9 @@ public final class GlideBuilder {
       defaultRequestListeners = Collections.unmodifiableList(defaultRequestListeners);
     }
 
+    GlideExperiments experiments = glideExperimentsBuilder.build();
     RequestManagerRetriever requestManagerRetriever =
-        new RequestManagerRetriever(requestManagerFactory);
+        new RequestManagerRetriever(requestManagerFactory, experiments);
 
     return new Glide(
         context,
@@ -535,6 +572,25 @@ public final class GlideBuilder {
         defaultRequestOptionsFactory,
         defaultTransitionOptions,
         defaultRequestListeners,
-        isLoggingRequestOriginsEnabled);
+        experiments);
   }
+
+  static final class ManualOverrideHardwareBitmapMaxFdCount implements Experiment {
+
+    final int fdCount;
+
+    ManualOverrideHardwareBitmapMaxFdCount(int fdCount) {
+      this.fdCount = fdCount;
+    }
+  }
+
+  /** See {@link #setWaitForFramesAfterTrimMemory(boolean)}. */
+  public static final class WaitForFramesAfterTrimMemory implements Experiment {
+    private WaitForFramesAfterTrimMemory() {}
+  }
+
+  static final class EnableImageDecoderForBitmaps implements Experiment {}
+
+  /** See {@link #setLogRequestOrigins(boolean)}. */
+  public static final class LogRequestOrigins implements Experiment {}
 }

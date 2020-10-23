@@ -18,7 +18,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = 18)
+@Config(sdk = 18)
 public class DrawableResourceTest {
   private TestDrawable drawable;
   private DrawableResource<TestDrawable> resource;
@@ -50,6 +50,7 @@ public class DrawableResourceTest {
     assertNotEquals(drawable, resource.get());
   }
 
+  @SuppressWarnings("TruthIncompatibleType")
   @Test
   public void testReturnsNewDrawableOnGet() {
     GifDrawable expected = mock(GifDrawable.class);
@@ -57,7 +58,8 @@ public class DrawableResourceTest {
     when(constantState.newDrawable()).thenReturn(expected);
     when(drawable.getConstantState()).thenReturn(constantState);
 
-    assertThat(resource.get()).isEqualTo(expected);
+    assertThat(resource.get())
+        .isEqualTo(/* expected: TestDrawable, actual: GifDrawable */ expected);
 
     verify(drawable).getConstantState();
     verify(constantState).newDrawable();

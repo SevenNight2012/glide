@@ -4,12 +4,12 @@ import static com.bumptech.glide.request.RequestOptions.decodeTypeOf;
 import static com.bumptech.glide.request.RequestOptions.diskCacheStrategyOf;
 import static com.bumptech.glide.request.RequestOptions.skipMemoryCacheOf;
 
+import android.content.ComponentCallbacks2;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.View;
 import androidx.annotation.CheckResult;
 import androidx.annotation.DrawableRes;
@@ -54,7 +54,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * @see Glide#with(androidx.fragment.app.Fragment)
  * @see Glide#with(Context)
  */
-public class RequestManager implements LifecycleListener, ModelTypes<RequestBuilder<Drawable>> {
+public class RequestManager
+    implements ComponentCallbacks2, LifecycleListener, ModelTypes<RequestBuilder<Drawable>> {
   private static final RequestOptions DECODE_TYPE_BITMAP = decodeTypeOf(Bitmap.class).lock();
   private static final RequestOptions DECODE_TYPE_GIF = decodeTypeOf(GifDrawable.class).lock();
   private static final RequestOptions DOWNLOAD_ONLY_OPTIONS =
@@ -83,7 +84,6 @@ public class RequestManager implements LifecycleListener, ModelTypes<RequestBuil
           lifecycle.addListener(RequestManager.this);
         }
       };
-  private final Handler mainHandler = new Handler(Looper.getMainLooper());
   private final ConnectivityMonitor connectivityMonitor;
   // Adding default listeners should be much less common than starting new requests. We want
   // some way of making sure that requests don't mutate our listeners without creating a new copy of
@@ -92,6 +92,8 @@ public class RequestManager implements LifecycleListener, ModelTypes<RequestBuil
 
   @GuardedBy("this")
   private RequestOptions requestOptions;
+
+  private boolean pauseAllRequestsOnTrimMemoryModerate;
 
   public RequestManager(
       @NonNull Glide glide,
@@ -132,7 +134,7 @@ public class RequestManager implements LifecycleListener, ModelTypes<RequestBuil
     // issue by delaying adding ourselves as a lifecycle listener by posting to the main thread.
     // This should be entirely safe.
     if (Util.isOnBackgroundThread()) {
-      mainHandler.post(addSelfToLifecycle);
+      Util.postOnUiThread(addSelfToLifecycle);
     } else {
       lifecycle.addListener(this);
     }
@@ -222,6 +224,14 @@ public class RequestManager implements LifecycleListener, ModelTypes<RequestBuil
   }
 
   /**
+   * If {@code true} then clear all in-progress and completed requests when the platform sends
+   * {@code onTrimMemory} with level = {@code TRIM_MEMORY_MODERATE}.
+   */
+  public void setPauseAllRequestsOnTrimMemoryModerate(boolean pauseAllOnTrim) {
+    pauseAllRequestsOnTrimMemoryModerate = pauseAllOnTrim;
+  }
+
+  /**
    * Returns true if loads for this {@link RequestManager} are currently paused.
    *
    * @see #pauseRequests()
@@ -263,6 +273,22 @@ public class RequestManager implements LifecycleListener, ModelTypes<RequestBuil
    */
   public synchronized void pauseAllRequests() {
     requestTracker.pauseAllRequests();
+  }
+
+  /**
+   * Performs {@link #pauseAllRequests()} recursively for all managers that are contextually
+   * descendant to this manager based on the Activity/Fragment hierarchy.
+   *
+   * <p>Similar to {@link #pauseRequestsRecursive()} with the exception that it also clears
+   * resources of completed loads.
+   */
+  // Public API.
+  @SuppressWarnings({"WeakerAccess", "unused"})
+  public synchronized void pauseAllRequestsRecursive() {
+    pauseAllRequests();
+    for (RequestManager requestManager : treeNode.getDescendants()) {
+      requestManager.pauseAllRequests();
+    }
   }
 
   /**
@@ -348,7 +374,7 @@ public class RequestManager implements LifecycleListener, ModelTypes<RequestBuil
     requestTracker.clearRequests();
     lifecycle.removeListener(this);
     lifecycle.removeListener(connectivityMonitor);
-    mainHandler.removeCallbacks(addSelfToLifecycle);
+    Util.removeCallbacksOnUiThread(addSelfToLifecycle);
     glide.unregisterRequestManager(this);
   }
 
@@ -590,7 +616,7 @@ public class RequestManager implements LifecycleListener, ModelTypes<RequestBuil
    *
    * @param target The Target to cancel loads for.
    */
-  public synchronized void clear(@Nullable final Target<?> target) {
+  public void clear(@Nullable final Target<?> target) {
     if (target == null) {
       return;
     }
@@ -617,8 +643,8 @@ public class RequestManager implements LifecycleListener, ModelTypes<RequestBuil
     // the corresponding Activity or Fragment is destroyed because retaining any reference to the
     // RequestManager leaks memory. It's possible that there's some brief period of time during or
     // immediately after onDestroy where this is reasonable, but I can't think of why.
-    if (!isOwnedByUs && !glide.removeFromManagers(target) && target.getRequest() != null) {
-      Request request = target.getRequest();
+    Request request = target.getRequest();
+    if (!isOwnedByUs && !glide.removeFromManagers(target) && request != null) {
       target.setRequest(null);
       request.clear();
     }
@@ -631,7 +657,7 @@ public class RequestManager implements LifecycleListener, ModelTypes<RequestBuil
       return true;
     }
 
-    if (requestTracker.clearRemoveAndRecycle(request)) {
+    if (requestTracker.clearAndRemove(request)) {
       targetTracker.untrack(target);
       target.setRequest(null);
       return true;
@@ -662,6 +688,21 @@ public class RequestManager implements LifecycleListener, ModelTypes<RequestBuil
   public synchronized String toString() {
     return super.toString() + "{tracker=" + requestTracker + ", treeNode=" + treeNode + "}";
   }
+
+  @Override
+  public void onTrimMemory(int level) {
+    if (level == TRIM_MEMORY_MODERATE && pauseAllRequestsOnTrimMemoryModerate) {
+      pauseAllRequestsRecursive();
+    }
+  }
+
+  @Override
+  public void onLowMemory() {
+    // Nothing to add conditionally. See Glide#onTrimMemory for unconditional behavior.
+  }
+
+  @Override
+  public void onConfigurationChanged(Configuration newConfig) {}
 
   private class RequestManagerConnectivityListener
       implements ConnectivityMonitor.ConnectivityListener {

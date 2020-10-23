@@ -1,7 +1,7 @@
 package com.bumptech.glide.load.data.mediastore;
 
-import static org.mockito.Matchers.eq;
-import static org.mockito.Matchers.isNotNull;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNotNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,7 +19,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = 18)
+@Config(sdk = 18)
 public class ThumbFetcherTest {
 
   @Mock private ThumbnailStreamOpener opener;

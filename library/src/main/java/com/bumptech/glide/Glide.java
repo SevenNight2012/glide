@@ -22,11 +22,13 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
+import com.bumptech.glide.GlideBuilder.EnableImageDecoderForBitmaps;
 import com.bumptech.glide.gifdecoder.GifDecoder;
 import com.bumptech.glide.load.DecodeFormat;
 import com.bumptech.glide.load.ImageHeaderParser;
 import com.bumptech.glide.load.ResourceDecoder;
 import com.bumptech.glide.load.data.InputStreamRewinder;
+import com.bumptech.glide.load.data.ParcelFileDescriptorRewinder;
 import com.bumptech.glide.load.engine.Engine;
 import com.bumptech.glide.load.engine.bitmap_recycle.ArrayPool;
 import com.bumptech.glide.load.engine.bitmap_recycle.BitmapPool;
@@ -49,17 +51,21 @@ import com.bumptech.glide.load.model.UnitModelLoader;
 import com.bumptech.glide.load.model.UriLoader;
 import com.bumptech.glide.load.model.UrlUriLoader;
 import com.bumptech.glide.load.model.stream.HttpGlideUrlLoader;
-import com.bumptech.glide.load.model.stream.HttpUriLoader;
 import com.bumptech.glide.load.model.stream.MediaStoreImageThumbLoader;
 import com.bumptech.glide.load.model.stream.MediaStoreVideoThumbLoader;
+import com.bumptech.glide.load.model.stream.QMediaStoreUriLoader;
 import com.bumptech.glide.load.model.stream.UrlLoader;
 import com.bumptech.glide.load.resource.bitmap.BitmapDrawableDecoder;
 import com.bumptech.glide.load.resource.bitmap.BitmapDrawableEncoder;
 import com.bumptech.glide.load.resource.bitmap.BitmapEncoder;
 import com.bumptech.glide.load.resource.bitmap.ByteBufferBitmapDecoder;
+import com.bumptech.glide.load.resource.bitmap.ByteBufferBitmapImageDecoderResourceDecoder;
 import com.bumptech.glide.load.resource.bitmap.DefaultImageHeaderParser;
 import com.bumptech.glide.load.resource.bitmap.Downsampler;
 import com.bumptech.glide.load.resource.bitmap.ExifInterfaceImageHeaderParser;
+import com.bumptech.glide.load.resource.bitmap.HardwareConfigState;
+import com.bumptech.glide.load.resource.bitmap.InputStreamBitmapImageDecoderResourceDecoder;
+import com.bumptech.glide.load.resource.bitmap.ParcelFileDescriptorBitmapDecoder;
 import com.bumptech.glide.load.resource.bitmap.ResourceBitmapDecoder;
 import com.bumptech.glide.load.resource.bitmap.StreamBitmapDecoder;
 import com.bumptech.glide.load.resource.bitmap.UnitBitmapDecoder;
@@ -106,7 +112,10 @@ import java.util.Set;
 public class Glide implements ComponentCallbacks2 {
   private static final String DEFAULT_DISK_CACHE_DIR = "image_manager_disk_cache";
   private static final String TAG = "Glide";
+
+  @GuardedBy("Glide.class")
   private static volatile Glide glide;
+
   private static volatile boolean isInitializing;
 
   private final Engine engine;
@@ -117,7 +126,10 @@ public class Glide implements ComponentCallbacks2 {
   private final ArrayPool arrayPool;
   private final RequestManagerRetriever requestManagerRetriever;
   private final ConnectivityMonitorFactory connectivityMonitorFactory;
+
+  @GuardedBy("managers")
   private final List<RequestManager> managers = new ArrayList<>();
+
   private final RequestOptionsFactory defaultRequestOptionsFactory;
   private MemoryCategory memoryCategory = MemoryCategory.NORMAL;
 
@@ -168,11 +180,15 @@ public class Glide implements ComponentCallbacks2 {
    * @return the singleton
    */
   @NonNull
+  // Double checked locking is safe here.
+  @SuppressWarnings("GuardedBy")
   public static Glide get(@NonNull Context context) {
     if (glide == null) {
+      GeneratedAppGlideModule annotationGeneratedModule =
+          getAnnotationGeneratedGlideModules(context.getApplicationContext());
       synchronized (Glide.class) {
         if (glide == null) {
-          checkAndInitializeGlide(context);
+          checkAndInitializeGlide(context, annotationGeneratedModule);
         }
       }
     }
@@ -180,7 +196,9 @@ public class Glide implements ComponentCallbacks2 {
     return glide;
   }
 
-  private static void checkAndInitializeGlide(@NonNull Context context) {
+  @GuardedBy("Glide.class")
+  private static void checkAndInitializeGlide(
+      @NonNull Context context, @Nullable GeneratedAppGlideModule generatedAppGlideModule) {
     // In the thread running initGlide(), one or more classes may call Glide.get(context).
     // Without this check, those calls could trigger infinite recursion.
     if (isInitializing) {
@@ -189,7 +207,7 @@ public class Glide implements ComponentCallbacks2 {
               + " use the provided Glide instance instead");
     }
     isInitializing = true;
-    initializeGlide(context);
+    initializeGlide(context, generatedAppGlideModule);
     isInitializing = false;
   }
 
@@ -208,30 +226,53 @@ public class Glide implements ComponentCallbacks2 {
   }
 
   @VisibleForTesting
-  public static synchronized void init(@NonNull Context context, @NonNull GlideBuilder builder) {
-    if (Glide.glide != null) {
-      tearDown();
+  public static void init(@NonNull Context context, @NonNull GlideBuilder builder) {
+    GeneratedAppGlideModule annotationGeneratedModule = getAnnotationGeneratedGlideModules(context);
+    synchronized (Glide.class) {
+      if (Glide.glide != null) {
+        tearDown();
+      }
+      initializeGlide(context, builder, annotationGeneratedModule);
     }
-    initializeGlide(context, builder);
+  }
+
+  /**
+   * Allows hardware Bitmaps to be used prior to the first frame in the app being drawn as soon as
+   * this method is called.
+   *
+   * <p>If you use this method in non-test code, your app will experience native crashes on some
+   * versions of Android if you try to decode a hardware Bitmap. This method is only useful for
+   * testing.
+   */
+  @VisibleForTesting
+  public static void enableHardwareBitmaps() {
+    HardwareConfigState.getInstance().unblockHardwareBitmaps();
   }
 
   @VisibleForTesting
-  public static synchronized void tearDown() {
-    if (glide != null) {
-      glide.getContext().getApplicationContext().unregisterComponentCallbacks(glide);
-      glide.engine.shutdown();
+  public static void tearDown() {
+    synchronized (Glide.class) {
+      if (glide != null) {
+        glide.getContext().getApplicationContext().unregisterComponentCallbacks(glide);
+        glide.engine.shutdown();
+      }
+      glide = null;
     }
-    glide = null;
   }
 
-  private static void initializeGlide(@NonNull Context context) {
-    initializeGlide(context, new GlideBuilder());
+  @GuardedBy("Glide.class")
+  private static void initializeGlide(
+      @NonNull Context context, @Nullable GeneratedAppGlideModule generatedAppGlideModule) {
+    initializeGlide(context, new GlideBuilder(), generatedAppGlideModule);
   }
 
+  @GuardedBy("Glide.class")
   @SuppressWarnings("deprecation")
-  private static void initializeGlide(@NonNull Context context, @NonNull GlideBuilder builder) {
+  private static void initializeGlide(
+      @NonNull Context context,
+      @NonNull GlideBuilder builder,
+      @Nullable GeneratedAppGlideModule annotationGeneratedModule) {
     Context applicationContext = context.getApplicationContext();
-    GeneratedAppGlideModule annotationGeneratedModule = getAnnotationGeneratedGlideModules();
     List<com.bumptech.glide.module.GlideModule> manifestModules = Collections.emptyList();
     if (annotationGeneratedModule == null || annotationGeneratedModule.isManifestParsingEnabled()) {
       manifestModules = new ManifestParser(applicationContext).parse();
@@ -292,14 +333,15 @@ public class Glide implements ComponentCallbacks2 {
   }
 
   @Nullable
-  @SuppressWarnings({"unchecked", "deprecation", "TryWithIdenticalCatches"})
-  private static GeneratedAppGlideModule getAnnotationGeneratedGlideModules() {
+  @SuppressWarnings({"unchecked", "TryWithIdenticalCatches", "PMD.UnusedFormalParameter"})
+  private static GeneratedAppGlideModule getAnnotationGeneratedGlideModules(Context context) {
     GeneratedAppGlideModule result = null;
     try {
       Class<GeneratedAppGlideModule> clazz =
           (Class<GeneratedAppGlideModule>)
               Class.forName("com.bumptech.glide.GeneratedAppGlideModuleImpl");
-      result = clazz.getDeclaredConstructor().newInstance();
+      result =
+          clazz.getDeclaredConstructor(Context.class).newInstance(context.getApplicationContext());
     } catch (ClassNotFoundException e) {
       if (Log.isLoggable(TAG, Log.WARN)) {
         Log.w(
@@ -330,6 +372,7 @@ public class Glide implements ComponentCallbacks2 {
         e);
   }
 
+  @SuppressWarnings("PMD.UnusedFormalParameter")
   Glide(
       @NonNull Context context,
       @NonNull Engine engine,
@@ -342,7 +385,7 @@ public class Glide implements ComponentCallbacks2 {
       @NonNull RequestOptionsFactory defaultRequestOptionsFactory,
       @NonNull Map<Class<?>, TransitionOptions<?, ?>> defaultTransitionOptions,
       @NonNull List<RequestListener<Object>> defaultRequestListeners,
-      boolean isLoggingRequestOriginsEnabled) {
+      GlideExperiments experiments) {
     this.engine = engine;
     this.bitmapPool = bitmapPool;
     this.arrayPool = arrayPool;
@@ -362,14 +405,28 @@ public class Glide implements ComponentCallbacks2 {
     }
 
     List<ImageHeaderParser> imageHeaderParsers = registry.getImageHeaderParsers();
-    Downsampler downsampler =
-        new Downsampler(imageHeaderParsers, resources.getDisplayMetrics(), bitmapPool, arrayPool);
+
     ByteBufferGifDecoder byteBufferGifDecoder =
         new ByteBufferGifDecoder(context, imageHeaderParsers, bitmapPool, arrayPool);
     ResourceDecoder<ParcelFileDescriptor, Bitmap> parcelFileDescriptorVideoDecoder =
         VideoDecoder.parcel(bitmapPool);
-    ByteBufferBitmapDecoder byteBufferBitmapDecoder = new ByteBufferBitmapDecoder(downsampler);
-    StreamBitmapDecoder streamBitmapDecoder = new StreamBitmapDecoder(downsampler, arrayPool);
+
+    // TODO(judds): Make ParcelFileDescriptorBitmapDecoder work with ImageDecoder.
+    Downsampler downsampler =
+        new Downsampler(
+            registry.getImageHeaderParsers(), resources.getDisplayMetrics(), bitmapPool, arrayPool);
+
+    ResourceDecoder<ByteBuffer, Bitmap> byteBufferBitmapDecoder;
+    ResourceDecoder<InputStream, Bitmap> streamBitmapDecoder;
+    if (experiments.isEnabled(EnableImageDecoderForBitmaps.class)
+        && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      streamBitmapDecoder = new InputStreamBitmapImageDecoderResourceDecoder();
+      byteBufferBitmapDecoder = new ByteBufferBitmapImageDecoderResourceDecoder();
+    } else {
+      byteBufferBitmapDecoder = new ByteBufferBitmapDecoder(downsampler);
+      streamBitmapDecoder = new StreamBitmapDecoder(downsampler, arrayPool);
+    }
+
     ResourceDrawableDecoder resourceDrawableDecoder = new ResourceDrawableDecoder(context);
     ResourceLoader.StreamFactory resourceLoaderStreamFactory =
         new ResourceLoader.StreamFactory(resources);
@@ -390,7 +447,17 @@ public class Glide implements ComponentCallbacks2 {
         .append(InputStream.class, new StreamEncoder(arrayPool))
         /* Bitmaps */
         .append(Registry.BUCKET_BITMAP, ByteBuffer.class, Bitmap.class, byteBufferBitmapDecoder)
-        .append(Registry.BUCKET_BITMAP, InputStream.class, Bitmap.class, streamBitmapDecoder)
+        .append(Registry.BUCKET_BITMAP, InputStream.class, Bitmap.class, streamBitmapDecoder);
+
+    if (ParcelFileDescriptorRewinder.isSupported()) {
+      registry.append(
+          Registry.BUCKET_BITMAP,
+          ParcelFileDescriptor.class,
+          Bitmap.class,
+          new ParcelFileDescriptorBitmapDecoder(downsampler));
+    }
+
+    registry
         .append(
             Registry.BUCKET_BITMAP,
             ParcelFileDescriptor.class,
@@ -451,7 +518,13 @@ public class Glide implements ComponentCallbacks2 {
         // Compilation with Gradle requires the type to be specified for UnitModelLoader here.
         .append(File.class, File.class, UnitModelLoader.Factory.<File>getInstance())
         /* Models */
-        .register(new InputStreamRewinder.Factory(arrayPool))
+        .register(new InputStreamRewinder.Factory(arrayPool));
+
+    if (ParcelFileDescriptorRewinder.isSupported()) {
+      registry.register(new ParcelFileDescriptorRewinder.Factory());
+    }
+
+    registry
         .append(int.class, InputStream.class, resourceLoaderStreamFactory)
         .append(int.class, ParcelFileDescriptor.class, resourceLoaderFileDescriptorFactory)
         .append(Integer.class, InputStream.class, resourceLoaderStreamFactory)
@@ -466,14 +539,22 @@ public class Glide implements ComponentCallbacks2 {
         .append(String.class, ParcelFileDescriptor.class, new StringLoader.FileDescriptorFactory())
         .append(
             String.class, AssetFileDescriptor.class, new StringLoader.AssetFileDescriptorFactory())
-        .append(Uri.class, InputStream.class, new HttpUriLoader.Factory())
         .append(Uri.class, InputStream.class, new AssetUriLoader.StreamFactory(context.getAssets()))
         .append(
             Uri.class,
             ParcelFileDescriptor.class,
             new AssetUriLoader.FileDescriptorFactory(context.getAssets()))
         .append(Uri.class, InputStream.class, new MediaStoreImageThumbLoader.Factory(context))
-        .append(Uri.class, InputStream.class, new MediaStoreVideoThumbLoader.Factory(context))
+        .append(Uri.class, InputStream.class, new MediaStoreVideoThumbLoader.Factory(context));
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      registry.append(
+          Uri.class, InputStream.class, new QMediaStoreUriLoader.InputStreamFactory(context));
+      registry.append(
+          Uri.class,
+          ParcelFileDescriptor.class,
+          new QMediaStoreUriLoader.FileDescriptorFactory(context));
+    }
+    registry
         .append(Uri.class, InputStream.class, new UriLoader.StreamFactory(contentResolver))
         .append(
             Uri.class,
@@ -502,6 +583,16 @@ public class Glide implements ComponentCallbacks2 {
                 bitmapPool, bitmapBytesTranscoder, gifDrawableBytesTranscoder))
         .register(GifDrawable.class, byte[].class, gifDrawableBytesTranscoder);
 
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      ResourceDecoder<ByteBuffer, Bitmap> byteBufferVideoDecoder =
+          VideoDecoder.byteBuffer(bitmapPool);
+      registry.append(ByteBuffer.class, Bitmap.class, byteBufferVideoDecoder);
+      registry.append(
+          ByteBuffer.class,
+          BitmapDrawable.class,
+          new BitmapDrawableDecoder<>(resources, byteBufferVideoDecoder));
+    }
+
     ImageViewTargetFactory imageViewTargetFactory = new ImageViewTargetFactory();
     glideContext =
         new GlideContext(
@@ -513,7 +604,7 @@ public class Glide implements ComponentCallbacks2 {
             defaultTransitionOptions,
             defaultRequestListeners,
             engine,
-            isLoggingRequestOriginsEnabled,
+            experiments,
             logLevel);
   }
 
@@ -615,6 +706,13 @@ public class Glide implements ComponentCallbacks2 {
   public void trimMemory(int level) {
     // Engine asserts this anyway when removing resources, fail faster and consistently
     Util.assertMainThread();
+    // Request managers need to be trimmed before the caches and pools, in order for the latter to
+    // have the most benefit.
+    synchronized (managers) {
+      for (RequestManager manager : managers) {
+        manager.onTrimMemory(level);
+      }
+    }
     // memory cache needs to be trimmed before bitmap pool to trim re-pooled Bitmaps too. See #687.
     memoryCache.trimMemory(level);
     bitmapPool.trimMemory(level);
@@ -737,7 +835,7 @@ public class Glide implements ComponentCallbacks2 {
    */
   @NonNull
   public static RequestManager with(@NonNull Fragment fragment) {
-    return getRetriever(fragment.getActivity()).get(fragment);
+    return getRetriever(fragment.getContext()).get(fragment);
   }
 
   /**

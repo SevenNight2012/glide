@@ -5,11 +5,11 @@ import static com.bumptech.glide.tests.Util.mockResource;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyBoolean;
-import static org.mockito.Matchers.anyInt;
-import static org.mockito.Matchers.eq;
-import static org.mockito.Matchers.isA;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -23,6 +23,7 @@ import android.graphics.drawable.Drawable;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import com.bumptech.glide.GlideContext;
+import com.bumptech.glide.GlideExperiments;
 import com.bumptech.glide.Priority;
 import com.bumptech.glide.load.DataSource;
 import com.bumptech.glide.load.Key;
@@ -56,12 +57,12 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = 18)
+@Config(sdk = 18)
 @SuppressWarnings("rawtypes")
 public class SingleRequestTest {
 
   private SingleRequestBuilder builder;
-  @Mock private RequestListener<List> listener1;
+  @Mock private ExperimentalRequestListener<List> listener1;
   @Mock private RequestListener<List> listener2;
 
   @Before
@@ -81,9 +82,8 @@ public class SingleRequestTest {
   public void testCanHandleNullResources() {
     SingleRequest<List> request = builder.addRequestListener(listener1).build();
 
-    request.onResourceReady(null, DataSource.LOCAL);
+    request.onResourceReady(null, DataSource.LOCAL, /* isLoadedFromAlternateCacheKey= */ false);
 
-    assertTrue(request.isFailed());
     verify(listener1)
         .onLoadFailed(isAGlideException(), isA(Number.class), eq(builder.target), anyBoolean());
   }
@@ -93,9 +93,9 @@ public class SingleRequestTest {
     SingleRequest<List> request = builder.addRequestListener(listener1).build();
     when(builder.resource.get()).thenReturn(null);
 
-    request.onResourceReady(builder.resource, DataSource.REMOTE);
+    request.onResourceReady(
+        builder.resource, DataSource.REMOTE, /* isLoadedFromAlternateCacheKey= */ false);
 
-    assertTrue(request.isFailed());
     verify(builder.engine).release(eq(builder.resource));
     verify(listener1)
         .onLoadFailed(isAGlideException(), any(Number.class), eq(builder.target), anyBoolean());
@@ -107,39 +107,20 @@ public class SingleRequestTest {
     when(((Resource) (builder.resource)).get())
         .thenReturn("Invalid mocked String, this should be a List");
 
-    request.onResourceReady(builder.resource, DataSource.DATA_DISK_CACHE);
+    request.onResourceReady(
+        builder.resource, DataSource.DATA_DISK_CACHE, /* isLoadedFromAlternateCacheKey= */ true);
 
-    assertTrue(request.isFailed());
     verify(builder.engine).release(eq(builder.resource));
     verify(listener1)
         .onLoadFailed(isAGlideException(), any(Number.class), eq(builder.target), anyBoolean());
   }
 
   @Test
-  public void testIsNotFailedAfterClear() {
-    SingleRequest<List> request = builder.build();
-
-    request.onResourceReady(null, DataSource.DATA_DISK_CACHE);
-    request.clear();
-
-    assertFalse(request.isFailed());
-  }
-
-  @Test
-  public void testIsNotFailedAfterBegin() {
-    SingleRequest<List> request = builder.build();
-
-    request.onResourceReady(null, DataSource.DATA_DISK_CACHE);
-    request.begin();
-
-    assertFalse(request.isFailed());
-  }
-
-  @Test
   public void testIsCompleteAfterReceivingResource() {
     SingleRequest<List> request = builder.build();
 
-    request.onResourceReady(builder.resource, DataSource.LOCAL);
+    request.onResourceReady(
+        builder.resource, DataSource.LOCAL, /* isLoadedFromAlternateCacheKey= */ false);
 
     assertTrue(request.isComplete());
   }
@@ -147,7 +128,8 @@ public class SingleRequestTest {
   @Test
   public void testIsNotCompleteAfterClear() {
     SingleRequest<List> request = builder.build();
-    request.onResourceReady(builder.resource, DataSource.REMOTE);
+    request.onResourceReady(
+        builder.resource, DataSource.REMOTE, /* isLoadedFromAlternateCacheKey= */ false);
     request.clear();
 
     assertFalse(request.isComplete());
@@ -166,7 +148,7 @@ public class SingleRequestTest {
     SingleRequest<List> request = builder.build();
     request.clear();
 
-    verify(builder.target).onLoadCleared(any(Drawable.class));
+    verify(builder.target).onLoadCleared(anyDrawableOrNull());
   }
 
   @Test
@@ -175,7 +157,7 @@ public class SingleRequestTest {
     request.clear();
     request.clear();
 
-    verify(builder.target, times(1)).onLoadCleared(any(Drawable.class));
+    verify(builder.target, times(1)).onLoadCleared(anyDrawableOrNull());
   }
 
   @Test
@@ -190,6 +172,7 @@ public class SingleRequestTest {
   @Test
   public void testResourceIsNotCompleteWhenAskingCoordinatorIfCanSetImage() {
     RequestCoordinator requestCoordinator = mock(RequestCoordinator.class);
+    when(requestCoordinator.getRoot()).thenReturn(requestCoordinator);
     doAnswer(
             new Answer() {
               @Override
@@ -204,24 +187,51 @@ public class SingleRequestTest {
 
     SingleRequest<List> request = builder.setRequestCoordinator(requestCoordinator).build();
 
-    request.onResourceReady(builder.resource, DataSource.DATA_DISK_CACHE);
+    request.onResourceReady(
+        builder.resource, DataSource.DATA_DISK_CACHE, /* isLoadedFromAlternateCacheKey= */ false);
 
     verify(requestCoordinator).canSetImage(eq(request));
   }
 
   @Test
-  public void testIsNotFailedWithoutException() {
+  public void pause_whenRequestIsWaitingForASize_clearsRequest() {
     SingleRequest<List> request = builder.build();
 
-    assertFalse(request.isFailed());
+    request.begin();
+    request.pause();
+    assertThat(request.isRunning()).isFalse();
+    assertThat(request.isCleared()).isTrue();
   }
 
   @Test
-  public void testIsFailedAfterException() {
+  public void pause_whenRequestIsWaitingForAResource_clearsRequest() {
     SingleRequest<List> request = builder.build();
 
-    request.onLoadFailed(new GlideException("test"));
-    assertTrue(request.isFailed());
+    request.begin();
+    request.onSizeReady(100, 100);
+    request.pause();
+    assertThat(request.isRunning()).isFalse();
+    assertThat(request.isCleared()).isTrue();
+  }
+
+  @Test
+  public void pause_whenComplete_doesNotClearRequest() {
+    SingleRequest<List> request = builder.build();
+
+    request.onResourceReady(
+        builder.resource, DataSource.REMOTE, /* isLoadedFromAlternateCacheKey= */ false);
+    request.pause();
+    assertThat(request.isComplete()).isTrue();
+  }
+
+  @Test
+  public void pause_whenCleared_doesNotClearRequest() {
+    SingleRequest<List> request = builder.build();
+
+    request.clear();
+    request.pause();
+
+    verify(builder.target, times(1)).onLoadCleared(anyDrawableOrNull());
   }
 
   @Test
@@ -252,14 +262,6 @@ public class SingleRequestTest {
             anyBoolean(),
             any(ResourceCallback.class),
             anyExecutor());
-  }
-
-  @Test
-  public void testIsFailedAfterNoResultAndNullException() {
-    SingleRequest<List> request = builder.build();
-
-    request.onLoadFailed(new GlideException("test"));
-    assertTrue(request.isFailed());
   }
 
   @Test
@@ -301,7 +303,8 @@ public class SingleRequestTest {
   public void testResourceIsRecycledOnClear() {
     SingleRequest<List> request = builder.build();
 
-    request.onResourceReady(builder.resource, DataSource.REMOTE);
+    request.onResourceReady(
+        builder.resource, DataSource.REMOTE, /* isLoadedFromAlternateCacheKey= */ false);
     request.clear();
 
     verify(builder.engine).release(eq(builder.resource));
@@ -403,7 +406,8 @@ public class SingleRequestTest {
   public void testIsNotRunningAfterComplete() {
     SingleRequest<List> request = builder.build();
     request.begin();
-    request.onResourceReady(builder.resource, DataSource.REMOTE);
+    request.onResourceReady(
+        builder.resource, DataSource.REMOTE, /* isLoadedFromAlternateCacheKey= */ false);
 
     assertFalse(request.isRunning());
   }
@@ -429,7 +433,8 @@ public class SingleRequestTest {
   @Test
   public void testCallsTargetOnResourceReadyIfNoRequestListener() {
     SingleRequest<List> request = builder.build();
-    request.onResourceReady(builder.resource, DataSource.LOCAL);
+    request.onResourceReady(
+        builder.resource, DataSource.LOCAL, /* isLoadedFromAlternateCacheKey= */ false);
 
     verify(builder.target).onResourceReady(eq(builder.result), anyTransition());
   }
@@ -445,7 +450,8 @@ public class SingleRequestTest {
     when(listener2.onResourceReady(
             any(List.class), any(Number.class), eq(builder.target), isADataSource(), anyBoolean()))
         .thenReturn(false);
-    request.onResourceReady(builder.resource, DataSource.LOCAL);
+    request.onResourceReady(
+        builder.resource, DataSource.LOCAL, /* isLoadedFromAlternateCacheKey= */ false);
 
     verify(builder.target).onResourceReady(eq(builder.result), anyTransition());
   }
@@ -461,7 +467,8 @@ public class SingleRequestTest {
     when(listener1.onResourceReady(
             any(List.class), any(Number.class), eq(builder.target), isADataSource(), anyBoolean()))
         .thenReturn(true);
-    request.onResourceReady(builder.resource, DataSource.REMOTE);
+    request.onResourceReady(
+        builder.resource, DataSource.REMOTE, /* isLoadedFromAlternateCacheKey= */ false);
 
     verify(builder.target, never()).onResourceReady(any(List.class), anyTransition());
   }
@@ -510,7 +517,9 @@ public class SingleRequestTest {
   @Test
   public void testRequestListenerIsCalledWithResourceResult() {
     SingleRequest<List> request = builder.addRequestListener(listener1).build();
-    request.onResourceReady(builder.resource, DataSource.DATA_DISK_CACHE);
+    boolean isLoadedFromAlternateCacheKey = true;
+    request.onResourceReady(
+        builder.resource, DataSource.DATA_DISK_CACHE, isLoadedFromAlternateCacheKey);
 
     verify(listener1)
         .onResourceReady(
@@ -520,7 +529,8 @@ public class SingleRequestTest {
   @Test
   public void testRequestListenerIsCalledWithModel() {
     SingleRequest<List> request = builder.addRequestListener(listener1).build();
-    request.onResourceReady(builder.resource, DataSource.DATA_DISK_CACHE);
+    request.onResourceReady(
+        builder.resource, DataSource.DATA_DISK_CACHE, /* isLoadedFromAlternateCacheKey= */ false);
 
     verify(listener1)
         .onResourceReady(
@@ -530,7 +540,8 @@ public class SingleRequestTest {
   @Test
   public void testRequestListenerIsCalledWithTarget() {
     SingleRequest<List> request = builder.addRequestListener(listener1).build();
-    request.onResourceReady(builder.resource, DataSource.DATA_DISK_CACHE);
+    request.onResourceReady(
+        builder.resource, DataSource.DATA_DISK_CACHE, /* isLoadedFromAlternateCacheKey= */ false);
 
     verify(listener1)
         .onResourceReady(
@@ -565,7 +576,10 @@ public class SingleRequestTest {
             new Answer<Object>() {
               @Override
               public Object answer(InvocationOnMock invocation) {
-                request.onResourceReady(builder.resource, DataSource.MEMORY_CACHE);
+                request.onResourceReady(
+                    builder.resource,
+                    DataSource.MEMORY_CACHE,
+                    /* isLoadedFromAlternateCacheKey= */ false);
                 return null;
               }
             });
@@ -586,7 +600,8 @@ public class SingleRequestTest {
       testRequestListenerIsCalledWithNotLoadedFromMemoryCacheIfLoadCompletesAsynchronously() {
     SingleRequest<List> request = builder.addRequestListener(listener1).build();
     request.onSizeReady(100, 100);
-    request.onResourceReady(builder.resource, DataSource.LOCAL);
+    request.onResourceReady(
+        builder.resource, DataSource.LOCAL, /* isLoadedFromAlternateCacheKey= */ false);
 
     verify(listener1)
         .onResourceReady(
@@ -601,7 +616,8 @@ public class SingleRequestTest {
   public void testRequestListenerIsCalledWithIsFirstResourceIfNoRequestCoordinator() {
     SingleRequest<List> request =
         builder.setRequestCoordinator(null).addRequestListener(listener1).build();
-    request.onResourceReady(builder.resource, DataSource.DATA_DISK_CACHE);
+    request.onResourceReady(
+        builder.resource, DataSource.DATA_DISK_CACHE, /* isLoadedFromAlternateCacheKey= */ false);
 
     verify(listener1)
         .onResourceReady(
@@ -612,7 +628,8 @@ public class SingleRequestTest {
   public void testRequestListenerIsCalledWithFirstImageIfRequestCoordinatorReturnsNoResourceSet() {
     SingleRequest<List> request = builder.addRequestListener(listener1).build();
     when(builder.requestCoordinator.isAnyResourceSet()).thenReturn(false);
-    request.onResourceReady(builder.resource, DataSource.DATA_DISK_CACHE);
+    request.onResourceReady(
+        builder.resource, DataSource.DATA_DISK_CACHE, /* isLoadedFromAlternateCacheKey= */ false);
 
     verify(listener1)
         .onResourceReady(
@@ -624,7 +641,24 @@ public class SingleRequestTest {
       testRequestListenerIsCalledWithNotIsFirstRequestIfRequestCoordinatorReturnsResourceSet() {
     SingleRequest<List> request = builder.addRequestListener(listener1).build();
     when(builder.requestCoordinator.isAnyResourceSet()).thenReturn(true);
-    request.onResourceReady(builder.resource, DataSource.DATA_DISK_CACHE);
+    request.onResourceReady(
+        builder.resource, DataSource.DATA_DISK_CACHE, /* isLoadedFromAlternateCacheKey= */ false);
+
+    verify(listener1)
+        .onResourceReady(
+            eq(builder.result), any(Number.class), isAListTarget(), isADataSource(), eq(false));
+  }
+
+  @Test
+  public void
+      testRequestListenerIsCalledWithNotIsFirstRequestIfRequestCoordinatorParentReturnsResourceSet() {
+    SingleRequest<List> request = builder.addRequestListener(listener1).build();
+    RequestCoordinator rootRequestCoordinator = mock(RequestCoordinator.class);
+    when(rootRequestCoordinator.isAnyResourceSet()).thenReturn(true);
+    when(builder.requestCoordinator.isAnyResourceSet()).thenReturn(false);
+    when(builder.requestCoordinator.getRoot()).thenReturn(rootRequestCoordinator);
+    request.onResourceReady(
+        builder.resource, DataSource.DATA_DISK_CACHE, /* isLoadedFromAlternateCacheKey= */ true);
 
     verify(listener1)
         .onResourceReady(
@@ -637,7 +671,8 @@ public class SingleRequestTest {
     Transition<List> transition = mockTransition();
     when(builder.transitionFactory.build(any(DataSource.class), anyBoolean()))
         .thenReturn(transition);
-    request.onResourceReady(builder.resource, DataSource.DATA_DISK_CACHE);
+    request.onResourceReady(
+        builder.resource, DataSource.DATA_DISK_CACHE, /* isLoadedFromAlternateCacheKey= */ false);
 
     verify(builder.target).onResourceReady(eq(builder.result), eq(transition));
   }
@@ -742,7 +777,8 @@ public class SingleRequestTest {
   @Test
   public void testResourceOnlyReceivesOneGetOnResourceReady() {
     SingleRequest<List> request = builder.build();
-    request.onResourceReady(builder.resource, DataSource.LOCAL);
+    request.onResourceReady(
+        builder.resource, DataSource.LOCAL, /* isLoadedFromAlternateCacheKey= */ false);
 
     verify(builder.resource, times(1)).get();
   }
@@ -909,6 +945,8 @@ public class SingleRequestTest {
     private final Map<Class<?>, Transformation<?>> transformations = new HashMap<>();
 
     SingleRequestBuilder() {
+      when(glideContext.getExperiments()).thenReturn(mock(GlideExperiments.class));
+      when(requestCoordinator.getRoot()).thenReturn(requestCoordinator);
       when(requestCoordinator.canSetImage(any(Request.class))).thenReturn(true);
       when(requestCoordinator.canNotifyCleared(any(Request.class))).thenReturn(true);
       when(requestCoordinator.canNotifyStatusChanged(any(Request.class))).thenReturn(true);
@@ -999,6 +1037,7 @@ public class SingleRequestTest {
       return SingleRequest.obtain(
           /*context=*/ glideContext,
           /*glideContext=*/ glideContext,
+          /*requestLock=*/ new Object(),
           model,
           transcodeClass,
           requestOptions,
@@ -1013,6 +1052,10 @@ public class SingleRequestTest {
           transitionFactory,
           Executors.directExecutor());
     }
+  }
+
+  private static Drawable anyDrawableOrNull() {
+    return any();
   }
 
   // TODO do we want to move these to Util?
@@ -1032,7 +1075,7 @@ public class SingleRequestTest {
 
   @SuppressWarnings("unchecked")
   private static <T> Transition<T> anyTransition() {
-    return any(Transition.class);
+    return any();
   }
 
   private static Executor anyExecutor() {
@@ -1052,7 +1095,7 @@ public class SingleRequestTest {
       ResourceCallback cb =
           (ResourceCallback)
               invocationOnMock.getArguments()[invocationOnMock.getArguments().length - 2];
-      cb.onResourceReady(resource, DataSource.REMOTE);
+      cb.onResourceReady(resource, DataSource.REMOTE, /* isLoadedFromAlternateCacheKey= */ false);
       return null;
     }
   }

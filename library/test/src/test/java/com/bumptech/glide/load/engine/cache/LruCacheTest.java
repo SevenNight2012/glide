@@ -1,13 +1,13 @@
 package com.bumptech.glide.load.engine.cache;
 
+import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.AdditionalMatchers.not;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyObject;
-import static org.mockito.Matchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -24,8 +24,7 @@ import org.junit.runners.JUnit4;
 
 @RunWith(JUnit4.class)
 public class LruCacheTest {
-  // 1MB
-  private static final int SIZE = 2;
+  private static final int SIZE = 10;
   private LruCache<String, Object> cache;
   private CacheListener listener;
   private String currentKey;
@@ -35,7 +34,7 @@ public class LruCacheTest {
     currentKey = "";
     listener = mock(CacheListener.class);
     cache = new TestLruCache(SIZE, listener);
-    when(listener.getSize(anyObject())).thenReturn(1);
+    when(listener.getSize(any())).thenReturn(1);
   }
 
   @Test
@@ -57,7 +56,7 @@ public class LruCacheTest {
       cache.put(getKey(), new Object());
     }
 
-    verify(listener, never()).onItemRemoved(anyObject());
+    verify(listener, never()).onItemRemoved(any());
   }
 
   @Test
@@ -84,7 +83,7 @@ public class LruCacheTest {
       cache.put(getKey(), new Object());
     }
 
-    verify(listener).onItemRemoved(anyObject());
+    verify(listener).onItemRemoved(any());
   }
 
   @Test
@@ -119,17 +118,18 @@ public class LruCacheTest {
     for (int i = 0; i < SIZE; i++) {
       cache.put(getKey(), new Object());
     }
-    verify(listener, never()).onItemRemoved(anyObject());
+    verify(listener, never()).onItemRemoved(any());
     cache.put(getKey(), new Object());
-    verify(listener).onItemRemoved(anyObject());
+    verify(listener).onItemRemoved(any());
   }
 
   @Test
   public void testLeastRecentlyAddKeyEvictedFirstIfGetsAreEqual() {
     Object first = new Object();
     cache.put(getKey(), first);
-    cache.put(getKey(), new Object());
-    cache.put(getKey(), new Object());
+    for (int i = 0; i < SIZE; i++) {
+      cache.put(getKey(), new Object());
+    }
 
     verify(listener).onItemRemoved(eq(first));
     verify(listener, times(1)).onItemRemoved(any(Object.class));
@@ -146,7 +146,9 @@ public class LruCacheTest {
     cache.put(leastRecentlyUsedKey, leastRecentlyUsedObject);
 
     cache.get(mostRecentlyUsedKey);
-    cache.put(getKey(), new Object());
+    for (int i = 0; i < SIZE - 1; i++) {
+      cache.put(getKey(), new Object());
+    }
 
     verify(listener).onItemRemoved(eq(leastRecentlyUsedObject));
     verify(listener, times(1)).onItemRemoved(any(Object.class));
@@ -170,7 +172,7 @@ public class LruCacheTest {
 
     cache.put(getKey(), tooLarge);
 
-    verify(listener, times(1)).onItemRemoved(anyObject());
+    verify(listener, times(1)).onItemRemoved(any());
   }
 
   @Test
@@ -194,17 +196,17 @@ public class LruCacheTest {
       cache.put(key, value);
     }
 
-    verify(listener, never()).onItemRemoved(anyObject());
+    verify(listener, never()).onItemRemoved(any());
   }
 
   @Test
-  public void put_withSameValueTwice_doesNotEvictItems() {
+  public void put_withSameKeyAndValueTwice_doesNotEvictItems() {
     String key = getKey();
     Object value = new Object();
     cache.put(key, value);
     cache.put(key, value);
 
-    verify(listener, never()).onItemRemoved(anyObject());
+    verify(listener, never()).onItemRemoved(any());
   }
 
   @Test
@@ -213,7 +215,7 @@ public class LruCacheTest {
     cache.put(key, /* item= */ null);
     cache.put(key, new Object());
 
-    verify(listener, never()).onItemRemoved(anyObject());
+    verify(listener, never()).onItemRemoved(any());
   }
 
   @Test
@@ -222,7 +224,7 @@ public class LruCacheTest {
     when(listener.getSize(null)).thenReturn((int) (cache.getMaxSize() * 2));
     cache.put(key, null);
 
-    verify(listener).onItemRemoved(anyObject());
+    verify(listener).onItemRemoved(any());
   }
 
   @Test
@@ -233,7 +235,7 @@ public class LruCacheTest {
       cache.put(getKey(), new Object());
     }
 
-    verify(listener, never()).onItemRemoved(anyObject());
+    verify(listener, never()).onItemRemoved(any());
   }
 
   @Test
@@ -241,11 +243,13 @@ public class LruCacheTest {
     for (int i = 0; i < SIZE; i++) {
       cache.put(getKey(), new Object());
     }
-    verify(listener, never()).onItemRemoved(anyObject());
+    verify(listener, never()).onItemRemoved(any());
 
-    cache.setSizeMultiplier(0.5f);
+    float smallerMultiplier = 0.4f;
 
-    verify(listener).onItemRemoved(anyObject());
+    cache.setSizeMultiplier(smallerMultiplier);
+
+    verify(listener, times((int) (SIZE * (1 - smallerMultiplier)))).onItemRemoved(any());
   }
 
   @Test
@@ -258,7 +262,7 @@ public class LruCacheTest {
 
     cache.setSizeMultiplier(1);
 
-    verify(listener, times(sizeMultiplier)).onItemRemoved(anyObject());
+    verify(listener, times((sizeMultiplier * SIZE) - SIZE)).onItemRemoved(any());
   }
 
   @Test(expected = IllegalArgumentException.class)
@@ -273,7 +277,7 @@ public class LruCacheTest {
     }
     cache.setSizeMultiplier(0);
 
-    verify(listener, times(SIZE)).onItemRemoved(anyObject());
+    verify(listener, times(SIZE)).onItemRemoved(any());
   }
 
   @Test
@@ -298,7 +302,7 @@ public class LruCacheTest {
     cache.remove(key);
     cache.put(key, value);
 
-    verify(listener, never()).onItemRemoved(anyObject());
+    verify(listener, never()).onItemRemoved(any());
   }
 
   @Test
@@ -307,12 +311,64 @@ public class LruCacheTest {
     cache.put(key, new Object());
     cache.remove(key);
 
-    verify(listener, never()).onItemRemoved(anyObject());
+    verify(listener, never()).onItemRemoved(any());
   }
 
   @Test
   public void testGetMaxSizeReturnsCurrentMaxSizeOfCache() {
     assertEquals(SIZE, cache.getMaxSize());
+  }
+
+  @Test
+  public void setSizeMultiplier_withItemWhoseSizeDecreasesAfterAdd_doesNotCrash() {
+    Object itemWhoseSizeWillChange = new Object();
+    when(listener.getSize(itemWhoseSizeWillChange)).thenReturn(SIZE - 1).thenReturn(SIZE / 2);
+    cache.put(getKey(), itemWhoseSizeWillChange);
+    cache.setSizeMultiplier(0);
+  }
+
+  @Test
+  public void getCurrentSize_afterRemovingItemWhoseSizeChanged_returnsZero() {
+    Object itemWhoseSizeWillChange = new Object();
+    when(listener.getSize(itemWhoseSizeWillChange)).thenReturn(SIZE - 1).thenReturn(SIZE / 2);
+    String key = getKey();
+    cache.put(key, itemWhoseSizeWillChange);
+    cache.remove(key);
+
+    assertThat(cache.getCurrentSize()).isEqualTo(0);
+  }
+
+  @Test
+  public void clearMemory_afterRemovingItemWhoseSizeChanged_doesNotCrash() {
+    Object itemWhoseSizeWillChange = new Object();
+    when(listener.getSize(itemWhoseSizeWillChange)).thenReturn(SIZE - 1).thenReturn((SIZE / 2) - 1);
+    String key = getKey();
+    cache.put(key, itemWhoseSizeWillChange);
+    cache.remove(key);
+
+    cache.clearMemory();
+  }
+
+  @Test
+  public void getCurrentSize_afterUpdatingItemWhoseSizeChanged_returnsTheNewSize() {
+    Object itemWhoseSizeWillChange = new Object();
+    when(listener.getSize(itemWhoseSizeWillChange)).thenReturn(SIZE - 1).thenReturn((SIZE / 2) - 1);
+    String key = getKey();
+    cache.put(key, itemWhoseSizeWillChange);
+    cache.put(key, new Object());
+
+    assertThat(cache.getCurrentSize()).isEqualTo(1);
+  }
+
+  @Test
+  public void clearMemory_afterUpdatingItemWhoseSizeChanged_doesNotCrash() {
+    Object itemWhoseSizeWillChange = new Object();
+    when(listener.getSize(itemWhoseSizeWillChange)).thenReturn(SIZE - 1).thenReturn((SIZE / 2) - 1);
+    String key = getKey();
+    cache.put(key, itemWhoseSizeWillChange);
+    cache.put(key, new Object());
+
+    cache.clearMemory();
   }
 
   @Test
