@@ -12,11 +12,8 @@ public class ResourceToData {
     public static Option<String> OPTION = Option.memory(TAG, "");
 
     public static final String CAN_CACHE = "can_cache";
-    public static Option<String> CACHE_RESOURCE_AS_DATA = Option.memory(TAG, CAN_CACHE);
-
 
     private ResourceToData() {
 
     }
-
 }
