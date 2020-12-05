@@ -226,6 +226,38 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
   }
 
   /**
+   * Identical to calling {@link #error(RequestBuilder)} where the {@code RequestBuilder} is the
+   * result of calling {@link #clone()} and removing any existing thumbnail and error {@code
+   * RequestBuilders}.
+   *
+   * <p>Other than thumbnail and error {@code RequestBuilder}s, which are removed, all other options
+   * are retained from the primary request. However, <b>order matters!</b> Any options applied after
+   * this method is called will not be applied to the error {@code RequestBuilder}.
+   *
+   * <p>WARNING: Calling this method with a {@code model} whose type does not match the type of the
+   * model passed to {@code load()} may be dangerous! Any options that were applied by the various
+   * type specific {@code load()} methods, like {@link #load(byte[])} will be copied to the error
+   * request here even if the {@code model} you pass to this method doesn't match. Similary, options
+   * that would be normally applied by type specific {@code load()} methods will <em>not</em> be
+   * applied to this request. If this behavior is confusing or unexpected, use {@link
+   * #error(RequestBuilder)} instead.
+   */
+  @NonNull
+  @CheckResult
+  public RequestBuilder<TranscodeType> error(Object model) {
+    if (model == null) {
+      return error((RequestBuilder<TranscodeType>) null);
+    }
+    return error(cloneWithNullErrorAndThumbnail().load(model));
+  }
+
+  private RequestBuilder<TranscodeType> cloneWithNullErrorAndThumbnail() {
+    return clone()
+        .error((RequestBuilder<TranscodeType>) null)
+        .thumbnail((RequestBuilder<TranscodeType>) null);
+  }
+
+  /**
    * Loads and displays the resource retrieved by the given thumbnail request if it finishes before
    * this request. Best used for loading thumbnail resources that are smaller and will be loaded
    * more quickly than the full size resource. There are no guarantees about the order in which the
@@ -613,7 +645,6 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
    * arguments, the current model is not copied so changes to the model will affect both builders.
    */
   @SuppressWarnings({
-    "unchecked",
     // we don't want to throw to be user friendly
     "PMD.CloneThrowsCloneNotSupportedException"
   })
@@ -622,6 +653,15 @@ public class RequestBuilder<TranscodeType> extends BaseRequestOptions<RequestBui
   public RequestBuilder<TranscodeType> clone() {
     RequestBuilder<TranscodeType> result = super.clone();
     result.transitionOptions = result.transitionOptions.clone();
+    if (result.requestListeners != null) {
+      result.requestListeners = new ArrayList<>(result.requestListeners);
+    }
+    if (result.thumbnailBuilder != null) {
+      result.thumbnailBuilder = result.thumbnailBuilder.clone();
+    }
+    if (result.errorBuilder != null) {
+      result.errorBuilder = result.errorBuilder.clone();
+    }
     return result;
   }
 
