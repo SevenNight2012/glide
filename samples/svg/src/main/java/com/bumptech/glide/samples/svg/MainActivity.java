@@ -4,15 +4,18 @@ import static com.bumptech.glide.load.resource.drawable.DrawableTransitionOption
 
 import android.app.Activity;
 import android.content.ContentResolver;
+import android.content.Intent;
 import android.graphics.drawable.PictureDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
+import android.view.View.OnClickListener;
 import android.widget.ImageView;
 import android.widget.TextView;
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.RequestBuilder;
+import com.bumptech.glide.samples.svg.svga.SvgaActivity;
 import com.bumptech.glide.util.Preconditions;
 import java.io.File;
 
@@ -39,6 +42,13 @@ public class MainActivity extends Activity {
             .error(R.drawable.image_error)
             .transition(withCrossFade())
             .listener(new SvgSoftwareLayerSetter());
+    findViewById(R.id.show_svga).setOnClickListener(new OnClickListener() {
+      @Override
+      public void onClick(View v) {
+        Intent intent = new Intent(MainActivity.this, SvgaActivity.class);
+        startActivity(intent);
+      }
+    });
   }
 
   @Override

@@ -5,6 +5,12 @@ dependencies {
     annotationProcessor project(':annotation:compiler')
     implementation 'com.caverock:androidsvg:1.2.1'
     implementation "androidx.fragment:fragment:${ANDROID_X_VERSION}"
+    implementation ('com.mrcd:SVGAPlayer:2.5.5.5.1-SNAPSHOT')
+    implementation "com.mrcd:sudo-permission:1.0.1"
+    //图片视频选择
+    //implementation('com.mrcd:mediapicker:1.1.5.x')
+    implementation("com.mrcd:common:1.5.4.x")
+    //implementation("com.mrcd:ui:1.5.0.x")
 }
 
 android {
@@ -12,7 +18,8 @@ android {
 
     defaultConfig {
         applicationId 'com.bumptech.glide.samples.svg'
-        minSdkVersion MIN_SDK_VERSION as int
+//        minSdkVersion MIN_SDK_VERSION as int
+        minSdkVersion 19
         targetSdkVersion TARGET_SDK_VERSION as int
 
         versionCode 1
@@ -20,8 +27,8 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_7
-        targetCompatibility JavaVersion.VERSION_1_7
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 }
 

@@ -10,7 +10,7 @@ import com.bumptech.glide.util.Preconditions;
  *
  * @param <Z> The type of data returned by the wrapped {@link Resource}.
  */
-class EngineResource<Z> implements Resource<Z> {
+public class EngineResource<Z> implements Resource<Z> {
   private final boolean isMemoryCacheable;
   private final boolean isRecyclable;
   private final Resource<Z> resource;

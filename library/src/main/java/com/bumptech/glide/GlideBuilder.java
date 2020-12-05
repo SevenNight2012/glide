@@ -10,6 +10,7 @@ import androidx.collection.ArrayMap;
 import com.bumptech.glide.Glide.RequestOptionsFactory;
 import com.bumptech.glide.GlideExperiments.Experiment;
 import com.bumptech.glide.load.DataSource;
+import com.bumptech.glide.load.engine.ActiveResourceFactory;
 import com.bumptech.glide.load.engine.Engine;
 import com.bumptech.glide.load.engine.GlideException;
 import com.bumptech.glide.load.engine.bitmap_recycle.ArrayPool;
@@ -64,6 +65,13 @@ public final class GlideBuilder {
   private GlideExecutor animationExecutor;
   private boolean isActiveResourceRetentionAllowed;
   @Nullable private List<RequestListener<Object>> defaultRequestListeners;
+  //新增
+  private ActiveResourceFactory mResourceFactory;
+
+  public GlideBuilder setActiveResourceFactory(ActiveResourceFactory resourceFactory) {
+    mResourceFactory = resourceFactory;
+    return this;
+  }
 
   /**
    * Sets the {@link com.bumptech.glide.load.engine.bitmap_recycle.BitmapPool} implementation to use
@@ -538,6 +546,10 @@ public final class GlideBuilder {
       diskCacheFactory = new InternalCacheDiskCacheFactory(context);
     }
 
+    if (mResourceFactory == null) {
+      mResourceFactory = new ActiveResourceFactory.DefaultFactory();
+    }
+
     if (engine == null) {
       engine =
           new Engine(
@@ -547,6 +559,7 @@ public final class GlideBuilder {
               sourceExecutor,
               GlideExecutor.newUnlimitedSourceExecutor(),
               animationExecutor,
+              mResourceFactory,
               isActiveResourceRetentionAllowed);
     }
 

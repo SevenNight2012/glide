@@ -49,6 +49,7 @@ public class Engine
       GlideExecutor sourceExecutor,
       GlideExecutor sourceUnlimitedExecutor,
       GlideExecutor animationExecutor,
+      ActiveResourceFactory resourceFactory,
       boolean isActiveResourceRetentionAllowed) {
     this(
         memoryCache,
@@ -59,7 +60,7 @@ public class Engine
         animationExecutor,
         /*jobs=*/ null,
         /*keyFactory=*/ null,
-        /*activeResources=*/ null,
+        /*activeResources=*/ resourceFactory.createResource(isActiveResourceRetentionAllowed),
         /*engineJobFactory=*/ null,
         /*decodeJobFactory=*/ null,
         /*resourceRecycler=*/ null,

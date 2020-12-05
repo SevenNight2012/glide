@@ -2,8 +2,10 @@ package com.bumptech.glide.load.engine;
 
 import android.os.Build;
 import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.core.util.Pools;
+
 import com.bumptech.glide.GlideContext;
 import com.bumptech.glide.Priority;
 import com.bumptech.glide.Registry;
@@ -22,6 +24,7 @@ import com.bumptech.glide.util.Synthetic;
 import com.bumptech.glide.util.pool.FactoryPools.Poolable;
 import com.bumptech.glide.util.pool.GlideTrace;
 import com.bumptech.glide.util.pool.StateVerifier;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -609,6 +612,7 @@ class DecodeJob<R>
         default:
           throw new IllegalArgumentException("Unknown strategy: " + encodeStrategy);
       }
+      Log.v(TAG, "encodeStrategy: " + encodeStrategy + "  Key: " + key);
 
       LockedResource<Z> lockedResult = LockedResource.obtain(transformed);
       deferredEncodeManager.init(key, encoder, lockedResult);

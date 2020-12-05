@@ -2,7 +2,17 @@ import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import se.bjurr.violations.gradle.plugin.ViolationsTask
 
 buildscript {
+    Properties properties = new Properties()
+    properties.load(project.rootProject.file('local.properties').newDataInputStream())
+
     repositories {
+        maven {
+            url properties.getProperty("nexus.mavenCentral")
+            credentials {
+                username properties.getProperty("nexus.username")
+                password properties.getProperty("nexus.pwd")
+            }
+        }
         google()
         jcenter()
         maven {
@@ -33,8 +43,17 @@ if (JavaVersion.current().isJava8Compatible()) {
 }
 
 subprojects { project ->
+    Properties properties = new Properties()
+    properties.load(project.rootProject.file('local.properties').newDataInputStream())
 
     repositories {
+        maven {
+            url properties.getProperty("nexus.mavenCentral")
+            credentials {
+                username properties.getProperty("nexus.username")
+                password properties.getProperty("nexus.pwd")
+            }
+        }
         google()
         jcenter()
         maven {

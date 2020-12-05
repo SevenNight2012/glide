@@ -12,16 +12,17 @@ public abstract class DiskCacheStrategy {
    */
   public static final DiskCacheStrategy ALL =
       new DiskCacheStrategy() {
-        @Override
-        public boolean isDataCacheable(DataSource dataSource) {
-          return dataSource == DataSource.REMOTE;
-        }
 
-        @Override
-        public boolean isResourceCacheable(
-            boolean isFromAlternateCacheKey, DataSource dataSource, EncodeStrategy encodeStrategy) {
-          return dataSource != DataSource.RESOURCE_DISK_CACHE
-              && dataSource != DataSource.MEMORY_CACHE;
+          public final String name = "cache_all";
+
+          @Override
+          public boolean isDataCacheable(DataSource dataSource) {
+              return dataSource == DataSource.REMOTE;
+          }
+
+          @Override
+          public boolean isResourceCacheable(boolean isFromAlternateCacheKey, DataSource dataSource, EncodeStrategy encodeStrategy) {
+              return dataSource != DataSource.RESOURCE_DISK_CACHE && dataSource != DataSource.MEMORY_CACHE;
         }
 
         @Override
@@ -38,16 +39,18 @@ public abstract class DiskCacheStrategy {
   /** Saves no data to cache. */
   public static final DiskCacheStrategy NONE =
       new DiskCacheStrategy() {
-        @Override
-        public boolean isDataCacheable(DataSource dataSource) {
-          return false;
-        }
 
-        @Override
-        public boolean isResourceCacheable(
-            boolean isFromAlternateCacheKey, DataSource dataSource, EncodeStrategy encodeStrategy) {
-          return false;
-        }
+          public final String name = "cache_none";
+
+          @Override
+          public boolean isDataCacheable(DataSource dataSource) {
+              return false;
+          }
+
+          @Override
+          public boolean isResourceCacheable(boolean isFromAlternateCacheKey, DataSource dataSource, EncodeStrategy encodeStrategy) {
+              return false;
+          }
 
         @Override
         public boolean decodeCachedResource() {
@@ -63,6 +66,7 @@ public abstract class DiskCacheStrategy {
   /** Writes retrieved data directly to the disk cache before it's decoded. */
   public static final DiskCacheStrategy DATA =
       new DiskCacheStrategy() {
+        public final String name = "cache_data";
         @Override
         public boolean isDataCacheable(DataSource dataSource) {
           return dataSource != DataSource.DATA_DISK_CACHE && dataSource != DataSource.MEMORY_CACHE;
@@ -88,6 +92,7 @@ public abstract class DiskCacheStrategy {
   /** Writes resources to disk after they've been decoded. */
   public static final DiskCacheStrategy RESOURCE =
       new DiskCacheStrategy() {
+        public final String name = "cache_resource";
         @Override
         public boolean isDataCacheable(DataSource dataSource) {
           return false;
@@ -119,6 +124,7 @@ public abstract class DiskCacheStrategy {
    */
   public static final DiskCacheStrategy AUTOMATIC =
       new DiskCacheStrategy() {
+        public final String name = "cache_auto";
         @Override
         public boolean isDataCacheable(DataSource dataSource) {
           return dataSource == DataSource.REMOTE;

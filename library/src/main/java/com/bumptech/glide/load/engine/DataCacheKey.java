@@ -1,16 +1,24 @@
 package com.bumptech.glide.load.engine;
 
+import android.util.Log;
+
 import androidx.annotation.NonNull;
+
 import com.bumptech.glide.load.Key;
+
 import java.security.MessageDigest;
 
-/** A cache key for original source data + any requested signature. */
-final class DataCacheKey implements Key {
+/**
+ * A cache key for original source data + any requested signature.
+ */
+public final class DataCacheKey implements Key {
+
+  public static final String TAG = "DataCacheKey";
 
   private final Key sourceKey;
   private final Key signature;
 
-  DataCacheKey(Key sourceKey, Key signature) {
+  public DataCacheKey(Key sourceKey, Key signature) {
     this.sourceKey = sourceKey;
     this.signature = signature;
   }
@@ -37,7 +45,9 @@ final class DataCacheKey implements Key {
 
   @Override
   public String toString() {
-    return "DataCacheKey{" + "sourceKey=" + sourceKey + ", signature=" + signature + '}';
+    String string = "DataCacheKey{" + "sourceKey=" + sourceKey + ", signature=" + signature + '}';
+    Log.d(TAG, "toString: " + string);
+    return string;
   }
 
   @Override

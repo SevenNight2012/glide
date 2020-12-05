@@ -17,7 +17,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadFactory;
 
-final class ActiveResources {
+public class ActiveResources {
   private final boolean isActiveResourceRetentionAllowed;
   private final Executor monitorClearedResourcesExecutor;
   @VisibleForTesting final Map<Key, ResourceWeakReference> activeEngineResources = new HashMap<>();
@@ -28,7 +28,7 @@ final class ActiveResources {
   private volatile boolean isShutdown;
   @Nullable private volatile DequeuedResourceCallback cb;
 
-  ActiveResources(boolean isActiveResourceRetentionAllowed) {
+  public ActiveResources(boolean isActiveResourceRetentionAllowed) {
     this(
         isActiveResourceRetentionAllowed,
         java.util.concurrent.Executors.newSingleThreadExecutor(
@@ -90,7 +90,7 @@ final class ActiveResources {
   }
 
   @Nullable
-  synchronized EngineResource<?> get(Key key) {
+  public synchronized EngineResource<?> get(Key key) {
     ResourceWeakReference activeRef = activeEngineResources.get(key);
     if (activeRef == null) {
       return null;

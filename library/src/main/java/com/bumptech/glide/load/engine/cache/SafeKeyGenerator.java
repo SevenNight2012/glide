@@ -1,7 +1,10 @@
 package com.bumptech.glide.load.engine.cache;
 
+import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.core.util.Pools;
+
 import com.bumptech.glide.load.Key;
 import com.bumptech.glide.util.LruCache;
 import com.bumptech.glide.util.Preconditions;
@@ -9,6 +12,7 @@ import com.bumptech.glide.util.Synthetic;
 import com.bumptech.glide.util.Util;
 import com.bumptech.glide.util.pool.FactoryPools;
 import com.bumptech.glide.util.pool.StateVerifier;
+
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
@@ -19,16 +23,15 @@ import java.security.NoSuchAlgorithmException;
 // Public API.
 @SuppressWarnings("WeakerAccess")
 public class SafeKeyGenerator {
+  public static final String TAG = "SafeKeyGenerator";
+
   private final LruCache<Key, String> loadIdToSafeHash = new LruCache<>(1000);
-  private final Pools.Pool<PoolableDigestContainer> digestPool =
-      FactoryPools.threadSafe(
-          10,
-          new FactoryPools.Factory<PoolableDigestContainer>() {
-            @Override
-            public PoolableDigestContainer create() {
-              try {
-                return new PoolableDigestContainer(MessageDigest.getInstance("SHA-256"));
-              } catch (NoSuchAlgorithmException e) {
+  private final Pools.Pool<PoolableDigestContainer> digestPool = FactoryPools.threadSafe(10, new FactoryPools.Factory<PoolableDigestContainer>() {
+    @Override
+    public PoolableDigestContainer create() {
+      try {
+        return new PoolableDigestContainer(MessageDigest.getInstance("SHA-256"));
+      } catch (NoSuchAlgorithmException e) {
                 throw new RuntimeException(e);
               }
             }
@@ -39,8 +42,10 @@ public class SafeKeyGenerator {
     synchronized (loadIdToSafeHash) {
       safeKey = loadIdToSafeHash.get(key);
     }
+//    Log.d(TAG, "getSafeKey: " + safeKey);
     if (safeKey == null) {
       safeKey = calculateHexStringDigest(key);
+      Log.d(TAG, "generate key: " + safeKey);
     }
     synchronized (loadIdToSafeHash) {
       loadIdToSafeHash.put(key, safeKey);
